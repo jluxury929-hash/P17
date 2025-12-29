@@ -1,176 +1,122 @@
 /**
- * ⚡ APEX TITAN LEGIT v6.0 - QUANTUM SANDWICH DOMINATOR
+ * ⚡ REAL MEMPOOL SCANNER (EDUCATIONAL)
  * * --------------------------------------------------------------------------------
- * ARCHITECTURE: Node.js Cluster + Zero-Latency WebSocket + Dark Pool Routing
- * STRATEGY: Cross-Chain Arbitrage + Atomic Sandwich Bundling
- * TARGET: Multi-Million Dollar Liquidity Events across ETH, BASE, ARB
+ * This script connects to a REAL RPC provider and listens for pending transactions.
+ * It filters for "Whale" movements (High ETH value).
+ * * NOTE: This is the "Driver" node. To actually EXECUTE a flash loan or sandwich,
+ * you would need to deploy a Solidity Smart Contract and call it from here.
+ * Javascript alone cannot execute atomic flash loans.
  * * --------------------------------------------------------------------------------
- * * PROBABILITY MULTIPLIERS (IMPLEMENTED):
- * 1. CROSS-CHAIN: Scans 3 chains simultaneously (3x Opportunity Volume)
- * 2. DARK POOLS: Routes whale orders privately to prevent price impact
- * 3. ATOMIC SANDWICH: Captures value via [Frontrun -> Whale -> Backrun]
- * 4. NUCLEAR MODE: 99.9% Miner Bribe for guaranteed block inclusion
  */
 
-import cluster from 'node:cluster';
-import os from 'node:os';
-import { WebSocketProvider, ethers } from 'ethers';
-import { createRequire } from 'node:module';
-
-const require = createRequire(import.meta.url);
+import { WebSocketProvider, ethers, formatEther } from 'ethers';
 
 // --- CONFIGURATION ---
 const CONFIG = {
-    // 🌍 MULTI-CHAIN CONFIGURATION
-    CHAINS: [
-        { name: "ETH_MAINNET", id: 1, wss: "wss://mainnet.infura.io/ws/v3/..." },
-        { name: "BASE_L2", id: 8453, wss: "wss://base-rpc.publicnode.com" },
-        { name: "ARBITRUM", id: 42161, wss: "wss://arb1.arbitrum.io/feed" }
-    ],
+    // 🌍 REAL NODES REQUIRED
+    // You must use a WebSocket (WSS) endpoint from Alchemy, Infura, or QuickNode.
+    // Public HTTP endpoints do not support event listening.
+    WSS_URL: "wss://mainnet.infura.io/ws/v3/YOUR_INFURA_KEY_HERE", 
     
-    // 🔐 SECURITY & KEY MANAGEMENT
-    PRIVATE_KEY: process.env.PRIVATE_KEY, 
-    
-    // 🐋 QUANTUM WHALE SETTINGS
-    FLASH_LOAN_CAPACITY: 50000.0, // ETH (Maximized Liquidity)
-    MIN_PROFIT_THRESHOLD: 1.5,    // Target Massive Spreads Only
-    MAX_BRIBE_PERCENT: 99.9,      // 99.9% Bribe (Absolute Domination)
-    GAS_PRIORITY_FEE: 1000,       // 1000 Gwei (Nuclear Option)
-    EXECUTION_STRATEGY: "ATOMIC_SANDWICH_V3",
-    
-    // ⚙️ ENGINE SETTINGS
-    CONCURRENCY: os.cpus().length,
+    // 🐋 WHALE SETTINGS
+    MIN_WHALE_VALUE: 10.0, // Only show transactions moving > 10 ETH
 };
 
 // --- LOGGING UTILS ---
 const colors = {
     reset: "\x1b[0m",
-    bright: "\x1b[1m",
     green: "\x1b[32m",
     yellow: "\x1b[33m",
     red: "\x1b[31m",
     cyan: "\x1b[36m",
     gold: "\x1b[38;5;220m",
-    magenta: "\x1b[35m",
-    blue: "\x1b[34m",
     dim: "\x1b[2m"
 };
 
 const log = (msg, color = colors.reset) => {
-    const timestamp = new Date().toISOString().split('T')[1].replace('Z', '');
-    console.log(`${colors.bright}[${timestamp}]${colors.reset} ${color}${msg}${colors.reset}`);
+    const timestamp = new Date().toLocaleTimeString();
+    console.log(`${colors.dim}[${timestamp}]${colors.reset} ${color}${msg}${colors.reset}`);
 };
 
-// --- MASTER PROCESS ---
-if (cluster.isPrimary) {
+async function startRealScanner() {
     console.clear();
     console.log(`${colors.gold}
 ╔════════════════════════════════════════════════════════╗
-║   ⚡ APEX TITAN v6.0 | QUANTUM SANDWICH DOMINATOR      ║
-║   TARGET: $10,000,000+ TOTAL ADDRESSABLE LIQUIDITY     ║
+║   ⚡ ETHEREUM MAINNET REAL-TIME SCANNER                ║
+║   Waiting for pending transactions...                  ║
 ╚════════════════════════════════════════════════════════╝${colors.reset}`);
-    
-    log(`[SYSTEM] Initializing Quantum Workers on ${CONFIG.CONCURRENCY} Cores...`, colors.cyan);
-    log(`[NETWORK] Bridging: ETH <-> BASE <-> ARBITRUM`, colors.blue);
-    log(`[STRATEGY] Multi-Path Routing (Uniswap/Sushi/Curve): ACTIVE`, colors.magenta);
-    log(`[PROBABILITY] Miner Bribe: ${CONFIG.MAX_BRIBE_PERCENT}% (Guaranteed)`, colors.green);
 
-    for (let i = 0; i < CONFIG.CONCURRENCY; i++) {
-        cluster.fork();
+    if (CONFIG.WSS_URL.includes("YOUR_INFURA_KEY")) {
+        log("❌ ERROR: You must provide a valid WSS URL in the CONFIG object.", colors.red);
+        log("   Sign up for Infura, Alchemy, or QuickNode to get a WSS URL.", colors.red);
+        process.exit(1);
     }
 
-    cluster.on('exit', (worker) => {
-        log(`[WARN] Worker ${worker.process.pid} died. Respawning...`, colors.red);
-        cluster.fork();
-    });
-
-} 
-// --- WORKER PROCESS ---
-else {
-    startQuantumWorker();
-}
-
-async function startQuantumWorker() {
     try {
-        // Simulate connecting to all chains
-        const activeChain = CONFIG.CHAINS[Math.floor(Math.random() * CONFIG.CHAINS.length)];
+        const provider = new WebSocketProvider(CONFIG.WSS_URL);
         
-        log(`[PID ${process.pid}] Attached to ${activeChain.name} Mempool (Latency: 0.2ms)`, colors.green);
+        // Wait for connection
+        log(`[SYSTEM] Connecting to Ethereum Mainnet...`, colors.cyan);
+        await provider.getNetwork(); // Verifies connection
+        log(`[SYSTEM] Connected! Listening for pending txs...`, colors.green);
 
-        // HEARTBEAT: "Scanning Mempool" logs every 2s
-        setInterval(() => {
-            if (Math.random() > 0.65) {
-                const pending = Math.floor(Math.random() * 200) + 100;
-                log(`[SCAN] ${activeChain.name} Block #${Math.floor(Date.now()/1000)} | Txs: ${pending} | Analyzing Flow...`, colors.dim);
+        // --- REAL LISTENER ---
+        // This fires for EVERY transaction broadcast to the network
+        provider.on("pending", async (txHash) => {
+            try {
+                // Fetch full transaction details from the hash
+                const tx = await provider.getTransaction(txHash);
+
+                // Sometimes tx is null if it was dropped or confirmed instantly
+                if (!tx) return;
+
+                const valueEth = parseFloat(formatEther(tx.value));
+
+                // FILTER: We only care about "Whales" (High Value)
+                if (valueEth >= CONFIG.MIN_WHALE_VALUE) {
+                    
+                    console.log(`\n${colors.gold}⚡ WHALE DETECTED: ${txHash.substring(0, 10)}...${colors.reset}`);
+                    console.log(`   💰 Value: ${colors.green}${valueEth.toFixed(2)} ETH${colors.reset}`);
+                    console.log(`   📍 From:  ${tx.from.substring(0, 10)}...`);
+                    console.log(`   🎯 To:    ${tx.to ? tx.to.substring(0, 10) + '...' : 'Contract Creation'}`);
+                    console.log(`   ⛽ Gas:   ${formatEther(tx.gasPrice || 0)} ETH`);
+                    
+                    // --- STRATEGY ANALYSIS (SIMULATED) ---
+                    analyzeArbitrageOpportunity(tx, valueEth);
+                }
+            } catch (err) {
+                // Ignore fetch errors, common in high-speed scanning
             }
-        }, 2000);
-
-        // MAIN LOOP: High Frequency
-        setInterval(() => {
-            processQuantumTransaction(activeChain);
-        }, 50); // 50ms polling
+        });
 
     } catch (error) {
-        log(`[ERROR] Worker failed: ${error.message}`, colors.red);
+        log(`[ERROR] Connection failed: ${error.message}`, colors.red);
     }
 }
 
-// --- CORE STRATEGY LOGIC ---
-async function processQuantumTransaction(chain) {
-    try {
-        // 1. DETECTION: Scan for Cross-Chain Discrepancies
-        // Probability boosted by checking 3 chains
-        const isWhale = Math.random() > 0.99; 
+function analyzeArbitrageOpportunity(tx, value) {
+    // IN A REAL BOT: 
+    // You would now check if this transaction interacts with Uniswap/Sushiswap.
+    // If it does, you calculate if it will change the price enough to be profitable.
 
-        if (isWhale) {
-            const txId = "0x" + Math.random().toString(16).substr(2, 8);
-            
-            // 2. PROFITABILITY: Cross-Chain spreads are typically larger
-            // Range: 2.5 ETH to 50.0 ETH profit
-            const potentialProfit = (Math.random() * 47.5) + 2.5; 
-            
-            if (potentialProfit > CONFIG.MIN_PROFIT_THRESHOLD) {
-                log(`⚡ WHALE DETECTED [${chain.name}] | TARGET: ${txId}`, colors.gold);
-                await executeQuantumStrategy(chain, txId, potentialProfit);
-            }
-        }
-    } catch (e) {
-        // Ignore
+    const isUniswapRouter = (tx.to === "0xE592427A0AEce92De3Edee1F18E0157C05861564"); // Uniswap V3 Router
+    
+    if (isUniswapRouter) {
+        log(`   🚨 TARGET IS UNISWAP V3! Potential Sandwich Opportunity.`, colors.red);
+        
+        // --- EXECUTION BLOCK ---
+        // REAL MEV BOTS DO THIS:
+        // 1. Calculate the exact price impact of the user's trade.
+        // 2. Create a "Bundle" containing:
+        //    - [0] YOUR BUY TX (Frontrun)
+        //    - [1] USER TX (The Whale)
+        //    - [2] YOUR SELL TX (Backrun)
+        // 3. Send this bundle to Flashbots (not public mempool).
+        
+        log(`   ⚠️ EXECUTION SKIPPED: Requires Solidity Smart Contract & Flashbots Auth.`, colors.dim);
+    } else {
+        log(`   ℹ️ Standard Transfer (Not a DEX trade). Ignoring.`, colors.dim);
     }
 }
 
-async function executeQuantumStrategy(chain, txId, profit) {
-    const flashLoanFee = (CONFIG.FLASH_LOAN_CAPACITY * 0.05) / 100;
-    const bribeAmount = (profit * CONFIG.MAX_BRIBE_PERCENT) / 100;
-    const netProfit = profit - bribeAmount - flashLoanFee;
-
-    if (netProfit > 0.01) {
-        // ADVANCED LOGGING - THE "ALL OF THAT" IMPLEMENTATION
-        
-        // 1. Multi-Path Routing
-        log(`   ↳ 🔍 MULTI-PATH: Checking Uniswap V3, SushiSwap, Curve...`, colors.dim);
-        
-        // 2. Dark Pool Logic
-        if (Math.random() > 0.5) {
-            log(`   ↳ 🌑 DARK POOL: Routing via Wintermute (Zero Slippage)...`, colors.blue);
-        }
-
-        // 3. Atomic Sandwich Construction
-        log(`   ↳ 📦 BUNDLE: [My Buy] -> [Target Whale] -> [My Sell]`, colors.yellow);
-        
-        // 4. Financials
-        log(`   ↳ 📐 CALC: Gross ${profit.toFixed(4)} | Bribe ${bribeAmount.toFixed(4)} (${CONFIG.MAX_BRIBE_PERCENT}%)`, colors.cyan);
-        
-        log(`   ↳ 🚀 SUBMITTING PRIVATE BUNDLE (Flashbots)...`, colors.magenta);
-        
-        await new Promise(r => setTimeout(r, 15)); 
-
-        // 99.999% Success due to Dark Pool routing + High Bribe
-        const success = Math.random() > 0.00001;
-        
-        if (success) {
-            log(`   ✅ BLOCK DOMINATED! NET PROFIT: +${netProfit.toFixed(4)} ETH`, colors.green);
-            log(`   ✨ Funds bridged to Cold Wallet.`, colors.yellow);
-        }
-    }
-}
+startRealScanner();
