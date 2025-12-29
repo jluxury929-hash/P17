@@ -13,10 +13,26 @@ import { WebSocketProvider, ethers, formatEther } from 'ethers';
 
 // --- CONFIGURATION ---
 const CONFIG = {
-    // 🌍 REAL NODES REQUIRED
-    // You must use a WebSocket (WSS) endpoint from Alchemy, Infura, or QuickNode.
-    // Public HTTP endpoints do not support event listening.
-    WSS_URL: "wss://mainnet.infura.io/ws/v3/YOUR_INFURA_KEY_HERE", 
+    // 🌍 NETWORK SELECTION
+    // Switch the WSS_URL below to the network you want to scan.
+    
+    // OPTION 1: ETHEREUM MAINNET (Infura)
+    WSS_URL: "wss://mainnet.infura.io/ws/v3/e601dc0b8ff943619576956539dd3b82",
+
+    // OPTION 2: BASE MAINNET (Alchemy) - Uncomment to use
+    // WSS_URL: "wss://base-mainnet.g.alchemy.com/v2/3xWq_7IHI0NJUPw8H0NQ_",
+
+    // 📚 AVAILABLE ENDPOINTS (Reference)
+    NETWORKS: {
+        ETH_MAINNET: {
+            WSS: "wss://mainnet.infura.io/ws/v3/e601dc0b8ff943619576956539dd3b82"
+        },
+        BASE_MAINNET: {
+            ALCHEMY_HTTPS: "https://base-mainnet.g.alchemy.com/v2/3xWq_7IHI0NJUPw8H0NQ_",
+            ALCHEMY_WSS: "wss://base-mainnet.g.alchemy.com/v2/3xWq_7IHI0NJUPw8H0NQ_",
+            INFURA_HTTPS: "https://base-mainnet.infura.io/ws/v3/e601dc0b8ff943619576956539dd3b82"
+        }
+    },
     
     // 🐋 WHALE SETTINGS
     MIN_WHALE_VALUE: 10.0, // Only show transactions moving > 10 ETH
@@ -42,7 +58,7 @@ async function startRealScanner() {
     console.clear();
     console.log(`${colors.gold}
 ╔════════════════════════════════════════════════════════╗
-║   ⚡ ETHEREUM MAINNET REAL-TIME SCANNER                ║
+║   ⚡ ETHEREUM/BASE REAL-TIME SCANNER                   ║
 ║   Waiting for pending transactions...                  ║
 ╚════════════════════════════════════════════════════════╝${colors.reset}`);
 
@@ -56,9 +72,11 @@ async function startRealScanner() {
         const provider = new WebSocketProvider(CONFIG.WSS_URL);
         
         // Wait for connection
-        log(`[SYSTEM] Connecting to Ethereum Mainnet...`, colors.cyan);
-        await provider.getNetwork(); // Verifies connection
-        log(`[SYSTEM] Connected! Listening for pending txs...`, colors.green);
+        log(`[SYSTEM] Connecting to Network...`, colors.cyan);
+        log(`[SYSTEM] Endpoint: ${CONFIG.WSS_URL}`, colors.dim);
+        
+        const network = await provider.getNetwork(); // Verifies connection
+        log(`[SYSTEM] Connected to Chain ID: ${network.chainId}! Listening for pending txs...`, colors.green);
 
         // --- REAL LISTENER ---
         // This fires for EVERY transaction broadcast to the network
@@ -99,7 +117,9 @@ function analyzeArbitrageOpportunity(tx, value) {
     // You would now check if this transaction interacts with Uniswap/Sushiswap.
     // If it does, you calculate if it will change the price enough to be profitable.
 
-    const isUniswapRouter = (tx.to === "0xE592427A0AEce92De3Edee1F18E0157C05861564"); // Uniswap V3 Router
+    // Uniswap V3 SwapRouter02 Address (Common across Mainnet, Base, Optimism, etc.)
+    const isUniswapRouter = (tx.to === "0xE592427A0AEce92De3Edee1F18E0157C05861564") || 
+                            (tx.to === "0x2626664c2603336E57B271c5C0b26F421741e481"); // Base specific V3
     
     if (isUniswapRouter) {
         log(`   🚨 TARGET IS UNISWAP V3! Potential Sandwich Opportunity.`, colors.red);
