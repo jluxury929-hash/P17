@@ -1,9 +1,12 @@
 /**
- * ⚡ ALCHEMY TITAN ENGINE | OMNISCIENT CLUSTER v36.0 (Unified AI-Enhanced)
+ * ⚡ ALCHEMY TITAN ENGINE | OMNISCIENT CLUSTER v36.1 (Self-Healing Connection)
  * * MERGED ARCHITECTURE:
  * 1. Omni-Channel Connectivity: Multi-Pool RPC Router + WSS Failover (from Apex v35).
  * 2. Neural Core: Predictive Gas, RL Bribing, and Heatmap Scoring (from Apex v35).
  * 3. Titan Execution: Flash Loan Logic (from Omniscient v6).
+ * * v36.1 Patch:
+ * - Removed process.exit(1) on WSS close to prevent reboot loops.
+ * - Added persistent internal reconnection logic for Mempool Scanner.
  */
 
 const cluster = require('cluster');
@@ -296,7 +299,7 @@ let STATE = {
 if (cluster.isPrimary) {
     console.clear();
     console.log(`${TXT.bold}${TXT.gold}╔════════════════════════════════════════════════════════╗${TXT.reset}`);
-    console.log(`${TXT.bold}${TXT.gold}║   ⚡ ALCHEMY TITAN ENGINE | OMNISCIENT CLUSTER v36.0   ║${TXT.reset}`);
+    console.log(`${TXT.bold}${TXT.gold}║   ⚡ ALCHEMY TITAN ENGINE | OMNISCIENT CLUSTER v36.1   ║${TXT.reset}`);
     console.log(`${TXT.bold}${TXT.gold}╚════════════════════════════════════════════════════════╝${TXT.reset}\n`);
     
     console.log(`${TXT.cyan}[SYSTEM] Initializing Multi-Core Architecture & AI...${TXT.reset}`);
@@ -363,43 +366,10 @@ async function startTitanWorker() {
         GLOBAL_REGISTRY = [...new Set(GLOBAL_REGISTRY)];
         console.log(`${TXT.green}✅ REGISTRY LOADED: ${GLOBAL_REGISTRY.length.toLocaleString()} Assets.${TXT.reset}`);
 
-        // C. WSS FAILOVER CONNECTION
-        let wsProvider;
-        let wssIndex = 0;
-        const connectWss = async () => {
-            while(true) {
-                const url = CONFIG.WSS_ENDPOINTS[wssIndex];
-                try {
-                    console.log(`${TXT.dim}🔌 Connecting to WSS: ${url}...${TXT.reset}`);
-                    const provider = new WebSocketProvider(url);
-                    provider.websocket.onerror = () => {}; 
-                    await new Promise((resolve, reject) => {
-                        const timeout = setTimeout(() => reject(new Error("Timeout")), 8000);
-                        provider.websocket.onopen = () => { clearTimeout(timeout); resolve(); };
-                        provider.websocket.onclose = () => reject(new Error("Closed"));
-                    });
-                    console.log(`${TXT.green}⚡ WSS Connected: ${url}${TXT.reset}`);
-                    return provider;
-                } catch (e) {
-                    console.log(`${TXT.yellow}⚠️ WSS Failed. Switching...${TXT.reset}`);
-                    wssIndex = (wssIndex + 1) % CONFIG.WSS_ENDPOINTS.length;
-                    await new Promise(r => setTimeout(r, 1000));
-                }
-            }
-        };
-        wsProvider = await connectWss();
-
-        // D. CONTRACTS
+        // Contracts
         const titanIface = new Interface(["function requestTitanLoan(address,uint256,address[])"]);
         const oracleContract = new Contract(CONFIG.GAS_ORACLE, ["function getL1Fee(bytes) view returns (uint256)"], httpProvider);
         const priceFeed = new Contract(CONFIG.CHAINLINK_FEED, ["function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"], httpProvider);
-
-        // Factory for Heatmap Training
-        const factory = new Contract(CONFIG.FACTORIES.UNISWAP_V3, ["event PoolCreated(address indexed, address indexed, uint24, int24, address)"], wsProvider);
-        factory.on("PoolCreated", (t0, t1) => { 
-            GLOBAL_REGISTRY.push(t0); GLOBAL_REGISTRY.push(t1);
-            AI.heatToken(t0); AI.heatToken(t1); // New pools are hot
-        });
 
         // Sync State
         STATE.nonce = await httpProvider.getTransactionCount(signer.address);
@@ -408,48 +378,91 @@ async function startTitanWorker() {
         
         console.log(`${TXT.green}✅ TITAN WORKER ACTIVE${TXT.reset} | ${TXT.gold}Treasury: ${STATE.balanceEth.toFixed(4)} ETH${TXT.reset}`);
 
-        // E. AI SENSOR LOOP (Every Block)
-        wsProvider.on("block", async (blockNum) => {
-            try {
-                STATE.currentBlock = blockNum;
-                const feeData = await httpProvider.getFeeData();
-                const [, priceData] = await priceFeed.latestRoundData();
-                
-                // Update AI Model
-                AI.updateMarketData(feeData.maxFeePerGas, blockNum);
-                STATE.currentEthPrice = Number(priceData) / 1e8;
-            } catch (e) {}
-        });
+        // ==================================================================
+        // C. SELF-HEALING WEBSOCKET LOGIC (REPLACES OLD CONNECT LOOP)
+        // ==================================================================
+        let wssIndex = 0;
+        let wsProvider;
 
-        // F. MEMPOOL SNIPER (Omniscient Logic + AI Filtering)
-        let scanCount = 0;
-        wsProvider.on("pending", async (txHash) => {
-            scanCount++;
-            // Display AI Stats in console
-            process.stdout.write(`\r${TXT.blue}⚡ [${AI.mode}] SCANNING${TXT.reset} | Txs: ${scanCount} | Vol: ${AI.volatility.toFixed(1)} | RL: x${AI.bribeMultiplier.toFixed(2)} `);
-            
-            // Use AI Core focus ratio to simulate stochastic filter
-            if (Math.random() > 0.9995) { 
-                // AI-Enhanced Target Selection
-                // We default to WETH/USDC (Omniscient) but allow AI to drift to other assets if HOT
-                let targetPath = [CONFIG.CORE_ASSETS.WETH, CONFIG.CORE_ASSETS.USDC];
-                
-                // 10% chance to check a "Hot" token instead of standard pair
-                if (Math.random() < 0.1 && AI.tokenHeat.size > 0) {
-                    const hotToken = AI.pickSmartAsset(GLOBAL_REGISTRY);
-                    targetPath = [CONFIG.CORE_ASSETS.WETH, hotToken];
+        const establishMempoolConnection = async () => {
+            while (true) {
+                const url = CONFIG.WSS_ENDPOINTS[wssIndex];
+                try {
+                    console.log(`${TXT.dim}🔌 Connecting to WSS: ${url}...${TXT.reset}`);
+                    
+                    // Force a new provider
+                    wsProvider = new WebSocketProvider(url);
+                    
+                    // Silent Error Handler (prevents immediate crash)
+                    wsProvider.websocket.onerror = () => {}; 
+
+                    // Connection Handshake
+                    await new Promise((resolve, reject) => {
+                        const timeout = setTimeout(() => reject(new Error("Timeout")), 8000);
+                        wsProvider.websocket.onopen = () => { clearTimeout(timeout); resolve(); };
+                        wsProvider.websocket.onclose = () => reject(new Error("Closed Immediately"));
+                    });
+
+                    console.log(`${TXT.green}⚡ WSS Connected: ${url}${TXT.reset}`);
+
+                    // --- ATTACH LISTENERS ONCE CONNECTED ---
+                    
+                    // 1. Heatmap Training (Factory)
+                    const factory = new Contract(CONFIG.FACTORIES.UNISWAP_V3, ["event PoolCreated(address indexed, address indexed, uint24, int24, address)"], wsProvider);
+                    factory.on("PoolCreated", (t0, t1) => { 
+                        GLOBAL_REGISTRY.push(t0); GLOBAL_REGISTRY.push(t1);
+                        AI.heatToken(t0); AI.heatToken(t1); 
+                    });
+
+                    // 2. AI Sensor (Blocks)
+                    wsProvider.on("block", async (blockNum) => {
+                        try {
+                            STATE.currentBlock = blockNum;
+                            const feeData = await httpProvider.getFeeData();
+                            const [, priceData] = await priceFeed.latestRoundData();
+                            AI.updateMarketData(feeData.maxFeePerGas, blockNum);
+                            STATE.currentEthPrice = Number(priceData) / 1e8;
+                        } catch (e) {}
+                    });
+
+                    // 3. Mempool Sniper (Pending)
+                    let scanCount = 0;
+                    wsProvider.on("pending", async (txHash) => {
+                        scanCount++;
+                        process.stdout.write(`\r${TXT.blue}⚡ [${AI.mode}] SCANNING${TXT.reset} | Txs: ${scanCount} | Vol: ${AI.volatility.toFixed(1)} | RL: x${AI.bribeMultiplier.toFixed(2)} `);
+                        
+                        if (Math.random() > 0.9995) { 
+                            let targetPath = [CONFIG.CORE_ASSETS.WETH, CONFIG.CORE_ASSETS.USDC];
+                            if (Math.random() < 0.1 && AI.tokenHeat.size > 0) {
+                                const hotToken = AI.pickSmartAsset(GLOBAL_REGISTRY);
+                                targetPath = [CONFIG.CORE_ASSETS.WETH, hotToken];
+                            }
+                            process.stdout.write(`\n${TXT.magenta}🌊 OPPORTUNITY DETECTED: ${txHash.substring(0,10)}...${TXT.reset}\n`);
+                            await executeOmniscientStrike(httpProvider, signer, titanIface, oracleContract, targetPath);
+                        }
+                    });
+
+                    // 4. IMMORTALITY PROTOCOL (Recursive Reconnect)
+                    // If this specific connection dies, we trigger the loop again cleanly
+                    wsProvider.websocket.onclose = async () => {
+                        console.warn(`\n${TXT.yellow}⚠️ WSS Disconnected. Re-routing...${TXT.reset}`);
+                        wssIndex = (wssIndex + 1) % CONFIG.WSS_ENDPOINTS.length;
+                        setTimeout(establishMempoolConnection, 1000); // Recursive call after delay
+                    };
+
+                    // Break the connection loop if successful
+                    break; 
+
+                } catch (e) {
+                    console.log(`${TXT.yellow}⚠️ WSS Failed. Switching...${TXT.reset}`);
+                    wssIndex = (wssIndex + 1) % CONFIG.WSS_ENDPOINTS.length;
+                    await new Promise(r => setTimeout(r, 1000));
                 }
-
-                process.stdout.write(`\n${TXT.magenta}🌊 OPPORTUNITY DETECTED: ${txHash.substring(0,10)}...${TXT.reset}\n`);
-                await executeOmniscientStrike(httpProvider, signer, titanIface, oracleContract, targetPath);
             }
-        });
-
-        // G. IMMORTALITY PROTOCOL
-        wsProvider.websocket.onclose = () => {
-            console.warn(`\n${TXT.red}⚠️ SOCKET LOST. REBOOTING...${TXT.reset}`);
-            process.exit(1); 
         };
+
+        // Start the Mempool Connection
+        await establishMempoolConnection();
 
     } catch (e) {
         console.error(`\n${TXT.red}❌ CRITICAL: ${e.message}${TXT.reset}`);
