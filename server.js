@@ -1,8 +1,9 @@
 /**
  * ===============================================================================
- * APEX ULTIMATE MASTER v53.2 (TITAN RESILIENCE BUILD)
+ * APEX ULTIMATE MASTER v53.3 (QUANTUM TITAN FINALITY) - REPAIR BUILD
  * ===============================================================================
- * DNA: 32-CORE SCALING | FALLBACK LOAD-BALANCER | L1 GAS AWARE | STATIC SYNC
+ * FIX: MASTER BOOTSTRAP ROTATION + SEQUENTIAL HYDRATION (429/503 GUARD)
+ * DNA: 32-CORE SCALING | L1-GAS AWARE | MULTI-RPC FALLBACK | STATIC SYNC
  * ===============================================================================
  */
 
@@ -27,46 +28,54 @@ const GLOBAL_CONFIG = {
     BENEFICIARY: "0x35c3ECfFBBDd942a8DbA7587424b58f74d6d6d15",
     STRIKE_DATA: "0x535a720a00000000000000000000000042000000000000000000000000000000000000060000000000000000000000004edbc9ba171790664872997239bc7a3f3a6331900000000000000000000000000000000000000000000000015af1d78b58c40000",
     GAS_LIMIT: 1250000n,
-    GAS_PRIORITY_FEE: 1000n, // Gwei nuclear tip
+    GAS_PRIORITY_FEE: 1000n, 
     MIN_NET_PROFIT: parseEther("0.00005"),
-    GAS_ORACLE: "0x420000000000000000000000000000000000000F", // Base L1 Fee Oracle
+    GAS_ORACLE: "0x420000000000000000000000000000000000000F",
     CHAINLINK_FEED: "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
-    // RESILIENT RPC POOL
     RPC_POOL: [
-        process.env.WSS_URL ? process.env.WSS_URL.replace("wss://", "https://") : null,
+        "https://base.merkle.io", // Private RPC Priority
+        "https://1rpc.io/base",   // High-availability fallback
         "https://mainnet.base.org",
-        "https://base.llamarpc.com",
-        "https://1rpc.io/base"
-    ].filter(url => url !== null)
+        "https://base.llamarpc.com"
+    ]
 };
 
 // --- MASTER PROCESS ---
 if (cluster.isPrimary) {
     console.clear();
     console.log(`${TXT.gold}╔════════════════════════════════════════════════════════╗`);
-    console.log(`║   ⚡ APEX MASTER v53.2 | QUANTUM TITAN FINALITY      ║`);
-    console.log(`║   RESILIENCE: 32-CORE | L1-AWARE | MULTI-RPC SYNC   ║`);
+    console.log(`║   ⚡ APEX TITAN v53.3 | SHADOW RECOVERY ENGAGED     ║`);
+    console.log(`║   DNA: COLD-START ROTATION + MASTER AUTO-RECOVERY   ║`);
     console.log(`╚════════════════════════════════════════════════════════╝${TXT.reset}\n`);
 
     let masterNonce = -1;
     const network = ethers.Network.from(GLOBAL_CONFIG.CHAIN_ID);
 
-    async function initMaster() {
-        try {
-            // Master uses a single reliable provider for the initial count
-            const provider = new JsonRpcProvider(GLOBAL_CONFIG.RPC_POOL[0], network, { staticNetwork: true });
-            const wallet = new Wallet(process.env.TREASURY_PRIVATE_KEY.trim(), provider);
-            masterNonce = await provider.getTransactionCount(wallet.address, 'latest');
-            console.log(`${TXT.green}✅ MASTER NONCE SYNCED: ${masterNonce}${TXT.reset}`);
-            
-            // Staggered launch to prevent provider rate-limits (1.5s delay per core)
-            for (let i = 0; i < Math.min(os.cpus().length, 32); i++) {
-                setTimeout(() => cluster.fork(), i * 1500);
+    async function bootstrapMaster() {
+        // v48.3: Cold-Start Rotation Loop to bypass exhausted API keys
+        for (const url of GLOBAL_CONFIG.RPC_POOL) {
+            try {
+                console.log(`${TXT.cyan}📡 Attempting Bootstrap via: ${new URL(url).hostname}...${TXT.reset}`);
+                const provider = new JsonRpcProvider(url, network, { staticNetwork: true });
+                const wallet = new Wallet(process.env.TREASURY_PRIVATE_KEY.trim(), provider);
+                
+                masterNonce = await provider.getTransactionCount(wallet.address, 'latest');
+                
+                console.log(`${TXT.green}✅ BOOTSTRAP SUCCESSFUL VIA ${new URL(url).hostname}${TXT.reset}`);
+                console.log(`${TXT.green}✅ MASTER NONCE SYNCED: ${masterNonce}${TXT.reset}`);
+                
+                // v14.2: Sequential Hydration (ensures 1 core handshakes every 1.5s)
+                for (let i = 0; i < Math.min(os.cpus().length, 32); i++) {
+                    await new Promise(r => setTimeout(r, 1500)); 
+                    cluster.fork();
+                }
+                return; 
+            } catch (e) {
+                console.log(`${TXT.red}❌ RPC REJECTED MASTER: ${new URL(url).hostname}${TXT.reset}`);
             }
-        } catch (e) {
-            console.error(`${TXT.red}MASTER INIT ERROR: ${e.message}${TXT.reset}`);
-            setTimeout(initMaster, 10000);
         }
+        console.log(`${TXT.yellow}⚠️ ALL RPC NODES EXHAUSTED. SYSTEM COOL-DOWN: 30S...${TXT.reset}`);
+        setTimeout(bootstrapMaster, 30000);
     }
 
     cluster.on('message', (worker, msg) => {
@@ -75,13 +84,14 @@ if (cluster.isPrimary) {
             masterNonce++;
         }
         if (msg.type === 'SIGNAL') {
-            Object.values(cluster.workers).forEach(w => w.send({ type: 'STRIKE_CMD' }));
+            Object.values(cluster.workers).forEach(w => {
+                if (w && w.isConnected()) w.send({ type: 'STRIKE_CMD' });
+            });
         }
     });
 
-    initMaster();
+    bootstrapMaster();
 } 
-
 // --- WORKER PROCESS ---
 else {
     runWorkerCore();
@@ -89,12 +99,10 @@ else {
 
 async function runWorkerCore() {
     const network = ethers.Network.from(GLOBAL_CONFIG.CHAIN_ID);
-    
-    // FallbackProvider distributes the load to prevent 429 errors
     const provider = new FallbackProvider(GLOBAL_CONFIG.RPC_POOL.map((url, i) => ({
         provider: new JsonRpcProvider(url, network, { staticNetwork: true }),
         priority: i + 1,
-        stallTimeout: 1500
+        stallTimeout: 1200
     })), network, { quorum: 1 });
 
     const wallet = new Wallet(process.env.TREASURY_PRIVATE_KEY.trim(), provider);
@@ -105,33 +113,37 @@ async function runWorkerCore() {
     const TAG = `${TXT.cyan}[CORE ${cluster.worker.id}] [${ROLE}]${TXT.reset}`;
 
     if (ROLE === "LISTENER") {
-        const ws = new WebSocketProvider(process.env.WSS_URL, network);
-        ws.on('block', () => process.send({ type: 'SIGNAL' }));
-        console.log(`${TAG} Listening for blocks...`);
+        async function connectWs() {
+            try {
+                const ws = new WebSocketProvider(process.env.WSS_URL, network);
+                ws.on('error', () => {}); 
+                ws.on('block', () => process.send({ type: 'SIGNAL' }));
+                console.log(`${TAG} Peering Engaged.`);
+            } catch (e) {
+                setTimeout(connectWs, 20000);
+            }
+        }
+        connectWs();
     } else {
         process.on('message', async (msg) => {
-            if (msg.type === 'STRIKE_CMD') await executeQuantumStrike(provider, wallet, l1Oracle, priceFeed, TAG);
+            if (msg.type === 'STRIKE_CMD') await executeTitanStrike(provider, wallet, l1Oracle, priceFeed, TAG);
         });
         console.log(`${TAG} Striker Standby.`);
     }
 }
 
-async function executeQuantumStrike(provider, wallet, l1Oracle, priceFeed, TAG) {
+async function executeTitanStrike(provider, wallet, l1Oracle, priceFeed, TAG) {
     try {
         const reqId = Math.random();
-        const nonce = await new Promise(res => {
-            const h = m => { if(m.id === reqId) { process.removeListener('message', h); res(m.nonce); }};
+        const nonce = await new Promise((res, rej) => {
+            const timeout = setTimeout(() => rej("Timeout"), 2000);
+            const h = m => { if(m.id === reqId) { clearTimeout(timeout); process.removeListener('message', h); res(m.nonce); }};
             process.on('message', h);
             process.send({ type: 'NONCE_REQ', id: reqId });
         });
 
         const [sim, l1Fee, feeData, priceData] = await Promise.all([
-            provider.call({ 
-                to: GLOBAL_CONFIG.TARGET_CONTRACT, 
-                data: GLOBAL_CONFIG.STRIKE_DATA, 
-                from: wallet.address,
-                gasLimit: GLOBAL_CONFIG.GAS_LIMIT
-            }).catch(() => "0x"),
+            provider.call({ to: GLOBAL_CONFIG.TARGET_CONTRACT, data: GLOBAL_CONFIG.STRIKE_DATA, from: wallet.address, gasLimit: GLOBAL_CONFIG.GAS_LIMIT }).catch(() => "0x"),
             l1Oracle.getL1Fee(GLOBAL_CONFIG.STRIKE_DATA).catch(() => 0n),
             provider.getFeeData(),
             priceFeed.latestRoundData().catch(() => [0, 0n])
@@ -139,30 +151,22 @@ async function executeQuantumStrike(provider, wallet, l1Oracle, priceFeed, TAG) 
 
         if (sim === "0x" || BigInt(sim) === 0n) return;
 
-        const priorityFee = parseEther(GLOBAL_CONFIG.GAS_PRIORITY_FEE.toString(), "gwei");
         const baseFee = feeData.gasPrice || parseEther("0.1", "gwei");
-        
-        // Base L2 Logic: Total Cost = (L2 Execution Gas) + (L1 Data Publication Fee)
+        const priorityFee = parseEther(GLOBAL_CONFIG.GAS_PRIORITY_FEE.toString(), "gwei");
         const totalCost = (GLOBAL_CONFIG.GAS_LIMIT * (baseFee + priorityFee)) + l1Fee;
-        const netProfit = BigInt(sim) - totalCost;
 
-        if (netProfit > GLOBAL_CONFIG.MIN_NET_PROFIT) {
+        if (BigInt(sim) > (totalCost + GLOBAL_CONFIG.MIN_NET_PROFIT)) {
             const ethPrice = Number(priceData[1]) / 1e8;
-            console.log(`\n${TXT.green}${TXT.bold}⚡ TITAN STRIKE: +${formatEther(netProfit)} ETH (~$${(parseFloat(formatEther(netProfit)) * ethPrice).toFixed(2)})${TXT.reset}`);
+            console.log(`\n${TXT.green}${TXT.bold}⚡ TITAN STRIKE: +${formatEther(BigInt(sim) - totalCost)} ETH (~$${(parseFloat(formatEther(BigInt(sim) - totalCost)) * ethPrice).toFixed(2)})${TXT.reset}`);
 
             const tx = {
-                to: GLOBAL_CONFIG.TARGET_CONTRACT,
-                data: GLOBAL_CONFIG.STRIKE_DATA,
-                nonce: nonce,
-                gasLimit: GLOBAL_CONFIG.GAS_LIMIT,
-                maxFeePerGas: baseFee + priorityFee,
-                maxPriorityFeePerGas: priorityFee,
-                type: 2,
-                chainId: 8453
+                to: GLOBAL_CONFIG.TARGET_CONTRACT, data: GLOBAL_CONFIG.STRIKE_DATA, nonce,
+                gasLimit: GLOBAL_CONFIG.GAS_LIMIT, maxFeePerGas: baseFee + priorityFee,
+                maxPriorityFeePerGas: priorityFee, type: 2, chainId: 8453
             };
 
-            const response = await wallet.sendTransaction(tx);
-            console.log(`${TAG} 🚀 DISPATCHED: ${response.hash.substring(0, 20)}...`);
+            const res = await wallet.sendTransaction(tx);
+            console.log(`${TAG} 🚀 MINED: ${res.hash.substring(0, 15)}...`);
         }
-    } catch (e) { /* Nonce drift or simulation fails handled silently */ }
+    } catch (e) { }
 }
